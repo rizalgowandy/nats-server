@@ -5287,13 +5287,11 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 			js, _ := nc.JetStream(nats.MaxWait(500 * time.Millisecond))
 			defer nc.Close()
 			for {
-				pt := time.NewTimer(time.Duration(50 * time.Millisecond))
 				select {
-				case <-pt.C:
-					js.Publish(fmt.Sprintf("kv.%d", rand.Intn(1000)), msg)
 				case <-qch:
-					pt.Stop()
 					return
+				default:
+					js.PublishAsync(fmt.Sprintf("kv.%d", rand.Intn(1000)), msg)
 				}
 			}
 		}()
@@ -5348,4 +5346,24 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 	if si.State.Msgs == uint64(num) {
 		t.Fatalf("Expected to see messages increase, got %d", si.State.Msgs)
 	}
+
+	lseq := uint64(0)
+	checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+		ok := 0
+		for _, s := range c.servers {
+			mset, err := s.GlobalAccount().lookupStream("TEST")
+			if err != nil {
+				return err
+			}
+			if ls := mset.lastSeq(); ls > lseq {
+				lseq = ls
+				return fmt.Errorf("Server %s lseq is still updating", s)
+			} else if ls < lseq {
+				return fmt.Errorf("Server %s has lseq=%v < %v", s, ls, lseq)
+			} else if ok++; ok == 3 {
+				return nil
+			}
+		}
+		return fmt.Errorf("Not all servers have same lseq")
+	})
 }

@@ -3343,6 +3343,9 @@ func (mset *stream) getDirectRequest(req *JSApiMsgGetRequest, reply string) {
 		sm, _, err = store.LoadNextMsg(req.NextFor, subjectHasWildcard(req.NextFor), req.Seq, &svp)
 	} else {
 		sm, err = store.LoadLastMsg(req.LastFor, &svp)
+		if err != nil {
+			fmt.Printf("@@IK: Loading last message for %q: %v\n", req.LastFor, err)
+		}
 	}
 	if err != nil {
 		hdr := []byte("NATS/1.0 404 Message Not Found\r\n\r\n")
