@@ -2031,6 +2031,7 @@ func (n *raft) runAsLeader() {
 			if vresp == nil {
 				continue
 			}
+			fmt.Printf("@@IK: s=%s - voteResponse: runAsLeader vresp:%+v - n.Term()=%v\n", n.s, vresp, n.Term())
 			if vresp.term > n.Term() {
 				n.switchToFollower(noLeader)
 				return
@@ -2538,6 +2539,7 @@ func (n *raft) runAsCandidate() {
 		case <-n.votes.ch:
 			// Because of drain() it is possible that we get nil from popOne().
 			vresp := convertVoteResponse(n.votes.popOne())
+			fmt.Printf("@@IK: s=%s - voteResponse: runAsCandidate vresp:%+v - n.Term()=%v\n", n.s, vresp, n.Term())
 			if vresp == nil {
 				continue
 			}
@@ -3369,6 +3371,7 @@ func (n *raft) decodeVoteResponse(msg []byte) *voteResponse {
 func (n *raft) handleVoteResponse(sub *subscription, c *client, _ *Account, _, reply string, msg []byte) {
 	vr := n.decodeVoteResponse(msg)
 	n.debug("Received a voteResponse %+v", vr)
+	fmt.Printf("@@IK: s=%s - received voteResponse: %+v\n", n.s, vr)
 	if vr == nil {
 		n.error("Received malformed vote response for %q", n.group)
 		return
@@ -3376,6 +3379,7 @@ func (n *raft) handleVoteResponse(sub *subscription, c *client, _ *Account, _, r
 
 	if state := n.State(); state != Candidate && state != Leader {
 		n.debug("Ignoring old vote response, we have stepped down")
+		fmt.Printf("@@IK: s=%s - Ignoring old vote response, we have stepped down\n", n.s)
 		return
 	}
 
@@ -3399,6 +3403,13 @@ func (n *raft) processVoteRequest(vr *voteRequest) error {
 
 	vresp := &voteResponse{n.term, n.id, false}
 	defer n.debug("Sending a voteResponse %+v -> %q", vresp, vr.reply)
+	defer func() {
+		fmt.Printf("@@IK: s=%s - n=%s - sending voteResponse: %+v -> %q\n", n.s, n.id, vresp, vr.reply)
+		fmt.Printf("@@IK: s=%s - n=%s - ----------  received voteRequest end -------------\n", n.s, n.id)
+	}()
+
+	fmt.Printf("@@IK: s=%s - n=%s -----------  received voteRequest start -------------\n", n.s, n.id)
+	fmt.Printf("@@IK: s=%s - n=%s - received voteRequest=%+v n.term=%v\n", n.s, n.id, vr, n.term)
 
 	// Ignore if we are newer.
 	if vr.term < n.term {
@@ -3420,6 +3431,7 @@ func (n *raft) processVoteRequest(vr *voteRequest) error {
 
 	// Only way we get to yes is through here.
 	voteOk := n.vote == noVote || n.vote == vr.candidate
+	fmt.Printf("@@IK: s=%s - n=%s - n.vote=%v vr.candidate=%v vr.lastTerm=%v n.pterm=%v vr.lastIndex=%v n.pindex=%v\n", n.s, n.id, n.vote, vr.candidate, vr.lastTerm, n.pterm, vr.lastIndex, n.pindex)
 	if voteOk && vr.lastTerm >= n.pterm && vr.lastIndex >= n.pindex {
 		vresp.granted = true
 		n.vote = vr.candidate
@@ -3454,6 +3466,7 @@ func (n *raft) requestVote() {
 	n.Unlock()
 
 	n.debug("Sending out voteRequest %+v", vr)
+	fmt.Printf("@@IK: s=%s - n=%s - sending out voteRequest: %+v\n", n.s, n.id, vr)
 
 	// Now send it out.
 	n.sendRPC(subj, reply, vr.encode())

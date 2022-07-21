@@ -1653,6 +1653,9 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 	s.Debugf("Starting stream monitor for '%s > %s' [%s]", sa.Client.serviceAccount(), sa.Config.Name, n.Group())
 	defer s.Debugf("Exiting stream monitor for '%s > %s' [%s]", sa.Client.serviceAccount(), sa.Config.Name, n.Group())
 
+	fmt.Printf("@@IK: %s - Starting stream monitor for '%s > %s' [%s]\n", s, sa.Client.serviceAccount(), sa.Config.Name, n.Group())
+	defer fmt.Printf("@@IK: %s - Exiting stream monitor for '%s > %s' [%s]\n", s, sa.Client.serviceAccount(), sa.Config.Name, n.Group())
+
 	// Make sure we do not leave the apply channel to fill up and block the raft layer.
 	defer func() {
 		if n.State() == Closed {
@@ -1798,6 +1801,7 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 			}
 			aq.recycle(&ces)
 		case isLeader = <-lch:
+			fmt.Printf("@@IK: s=%s - isLeader=%v\n", s, isLeader)
 			if isLeader {
 				if sendSnapshot && mset != nil && n != nil {
 					n.SendSnapshot(mset.stateSnapshot())
@@ -2711,6 +2715,7 @@ func (js *jetStream) processClusterUpdateStream(acc *Account, osa, sa *streamAss
 	if err == nil && mset != nil {
 		var needsSetLeader bool
 		if !alreadyRunning && numReplicas > 1 {
+			mset.setLeader(false)
 			if needsNode {
 				js.createRaftGroup(acc.GetName(), rg, storage)
 			}

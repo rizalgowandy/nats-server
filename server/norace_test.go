@@ -5348,7 +5348,7 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 	}
 
 	lseq := uint64(0)
-	checkFor(t, 5*time.Second, 50*time.Millisecond, func() error {
+	checkFor(t, 15*time.Second, 50*time.Millisecond, func() error {
 		ok := 0
 		for _, s := range c.servers {
 			mset, err := s.GlobalAccount().lookupStream("TEST")
