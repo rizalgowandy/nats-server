@@ -359,11 +359,11 @@ func TestJetStreamJWTMove(t *testing.T) {
 		require_Equal(t, ci.Cluster.Name, "C1")
 
 		sc.clusterForName("C2").waitOnStreamLeader(aExpPub, "MOVE-ME")
-		sc.clusterForName("C2").waitOnConsumerLeader(aExpPub, "MOVE-ME", "dur")
+		//sc.clusterForName("C2").waitOnConsumerLeader(aExpPub, "MOVE-ME", "dur")
 
 		checkFor(t, 20*time.Second, 250*time.Millisecond, func() error {
 			if si, err := js.StreamInfo("MOVE-ME"); err != nil {
-				return err
+				return fmt.Errorf("stream error: %v", err)
 			} else if si.Cluster.Name != "C2" {
 				return fmt.Errorf("Wrong cluster: %q", si.Cluster.Name)
 			} else if !strings.HasPrefix(si.Cluster.Leader, "C2-") {
@@ -375,7 +375,7 @@ func TestJetStreamJWTMove(t *testing.T) {
 			}
 			// Now make sure consumer has leader etc..
 			if ci, err := js.ConsumerInfo("MOVE-ME", "dur"); err != nil {
-				return err
+				return fmt.Errorf("consumer error: %v", err)
 			} else if ci.Cluster.Name != "C2" {
 				return fmt.Errorf("Wrong cluster: %q", ci.Cluster.Name)
 			} else if ci.Cluster.Leader == _EMPTY_ {
