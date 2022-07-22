@@ -358,7 +358,8 @@ func TestJetStreamJWTMove(t *testing.T) {
 		require_NoError(t, err)
 		require_Equal(t, ci.Cluster.Name, "C1")
 
-		sc.waitOnStreamLeader(aExpPub, "MOVE-ME")
+		sc.clusterForName("C2").waitOnStreamLeader(aExpPub, "MOVE-ME")
+		sc.clusterForName("C2").waitOnConsumerLeader(aExpPub, "MOVE-ME", "dur")
 
 		checkFor(t, 20*time.Second, 250*time.Millisecond, func() error {
 			if si, err := js.StreamInfo("MOVE-ME"); err != nil {
