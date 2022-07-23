@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -5265,6 +5266,7 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 
 	getSubj := fmt.Sprintf(JSDirectMsgGetT, "TEST")
 	getMsg := func(key string) *nats.Msg {
+		t.Helper()
 		req := []byte(fmt.Sprintf(`{"last_by_subj":%q}`, key))
 		m, err := nc.Request(getSubj, req, time.Second)
 		require_NoError(t, err)
@@ -5291,6 +5293,7 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 				case <-qch:
 					return
 				default:
+					// Send as fast as we can.
 					js.PublishAsync(fmt.Sprintf("kv.%d", rand.Intn(1000)), msg)
 				}
 			}
@@ -5323,7 +5326,7 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 	for _, s := range c.servers {
 		mset, err := s.GlobalAccount().lookupStream("TEST")
 		require_NoError(t, err)
-		checkFor(t, 10*time.Second, 500*time.Millisecond, func() error {
+		checkFor(t, 20*time.Second, 500*time.Millisecond, func() error {
 			mset.mu.RLock()
 			ok := mset.directSub != nil
 			mset.mu.RUnlock()
@@ -5347,23 +5350,21 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 		t.Fatalf("Expected to see messages increase, got %d", si.State.Msgs)
 	}
 
-	lseq := uint64(0)
-	checkFor(t, 15*time.Second, 50*time.Millisecond, func() error {
-		ok := 0
+	checkFor(t, 2*time.Second, 100*time.Millisecond, func() error {
+		// Make sure they are all the same from a state perspective.
+		// Leader will have the expected state.
+		lmset, err := c.streamLeader("$G", "TEST").GlobalAccount().lookupStream("TEST")
+		require_NoError(t, err)
+		expected := lmset.state()
+
 		for _, s := range c.servers {
 			mset, err := s.GlobalAccount().lookupStream("TEST")
-			if err != nil {
-				return err
-			}
-			if ls := mset.lastSeq(); ls > lseq {
-				lseq = ls
-				return fmt.Errorf("Server %s lseq is still updating", s)
-			} else if ls < lseq {
-				return fmt.Errorf("Server %s has lseq=%v < %v", s, ls, lseq)
-			} else if ok++; ok == 3 {
-				return nil
+			require_NoError(t, err)
+			if state := mset.state(); !reflect.DeepEqual(expected, state) {
+				return fmt.Errorf("Expected %+v, got %+v", expected, state)
 			}
 		}
-		return fmt.Errorf("Not all servers have same lseq")
+		return nil
 	})
+
 }

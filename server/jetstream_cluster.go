@@ -1748,12 +1748,15 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 	}
 	defer stopDirectMonitoring()
 
-	// This is triggered during a scale up from 1 to clustered mode. We need the new followers to catchup,
+	// This is triggered during a scale up from R1 to clustered mode. We need the new followers to catchup,
 	// similar to how we trigger the catchup mechanism post a backup/restore.
-	if sendSnapshot && isLeader && mset != nil && n != nil {
+	// We are the only one with state and will be the leader, and we need to make sure the snapshot is what
+	// the new followers see first, so no need to wait here.
+	if sendSnapshot && mset != nil && n != nil {
 		n.SendSnapshot(mset.stateSnapshot())
 		sendSnapshot = false
 	}
+
 	for {
 		select {
 		case <-s.quitCh:
@@ -1803,10 +1806,6 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 		case isLeader = <-lch:
 			fmt.Printf("@@IK: s=%s - isLeader=%v\n", s, isLeader)
 			if isLeader {
-				if sendSnapshot && mset != nil && n != nil {
-					n.SendSnapshot(mset.stateSnapshot())
-					sendSnapshot = false
-				}
 				if isRestore {
 					acc, _ := s.LookupAccount(sa.Client.serviceAccount())
 					restoreDoneCh = s.processStreamRestore(sa.Client, acc, sa.Config, _EMPTY_, sa.Reply, _EMPTY_)
@@ -1862,8 +1861,17 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 			mset.mu.Lock()
 			ad, md, current := mset.cfg.AllowDirect, mset.cfg.MirrorDirect, mset.isCurrent()
 			if !current {
-				mset.mu.Unlock()
-				continue
+				const syncThreshold = 90.0
+				// We are not current, but current means exactly caught up. Under heavy publish
+				// loads we may never reach this, so check if we are within 90% caught up.
+				_, c, a := mset.node.Progress()
+				if p := float64(a) / float64(c) * 100.0; p < syncThreshold {
+					mset.mu.Unlock()
+					continue
+				} else {
+					s.Debugf("Stream '%s > %s' enabling direct gets at %.0f%% synchronized",
+						sa.Client.serviceAccount(), sa.Config.Name, p)
+				}
 			}
 			// We are current, cancel monitoring and create the direct subs as needed.
 			if ad {
@@ -2715,10 +2723,11 @@ func (js *jetStream) processClusterUpdateStream(acc *Account, osa, sa *streamAss
 	if err == nil && mset != nil {
 		var needsSetLeader bool
 		if !alreadyRunning && numReplicas > 1 {
-			mset.setLeader(false)
 			if needsNode {
+				mset.setLeader(false)
 				js.createRaftGroup(acc.GetName(), rg, storage)
 			}
+			// Start monitoring..
 			s.startGoRoutine(func() { js.monitorStream(mset, sa, needsNode) })
 		} else if numReplicas == 1 && alreadyRunning {
 			// We downgraded to R1. Make sure we cleanup the raft node and the stream monitor.
@@ -2731,13 +2740,12 @@ func (js *jetStream) processClusterUpdateStream(acc *Account, osa, sa *streamAss
 			rg.node = nil
 			js.mu.Unlock()
 		}
-
+		// Call update.
 		if err = mset.update(cfg); err != nil {
 			s.Warnf("JetStream cluster error updating stream %q for account %q: %v", cfg.Name, acc.Name, err)
 		}
 		// Set the new stream assignment.
 		mset.setStreamAssignment(sa)
-
 		// Make sure we are the leader now that we are R1.
 		if needsSetLeader {
 			mset.setLeader(true)
@@ -5870,6 +5878,7 @@ func (mset *stream) stateSnapshot() []byte {
 		Deleted:  state.Deleted,
 	}
 	b, _ := json.Marshal(snap)
+
 	return b
 }
 
@@ -5883,11 +5892,17 @@ func (mset *stream) processClusteredInboundMsg(subject, reply string, hdr, msg [
 	name, stype := mset.cfg.Name, mset.cfg.Storage
 	s, js, jsa, st, rf, tierName, outq, node := mset.srv, mset.js, mset.jsa, mset.cfg.Storage, mset.cfg.Replicas, mset.tier, mset.outq, mset.node
 	maxMsgSize, lseq := int(mset.cfg.MaxMsgSize), mset.lseq
+	isLeader := mset.isLeader()
 	mset.mu.RUnlock()
 
 	// This should not happen but possible now that we allow scale up, and scale down where this could trigger.
 	if node == nil {
 		return mset.processJetStreamMsg(subject, reply, hdr, msg, 0, 0)
+	}
+
+	// Check that we are the leader. This can be false if we have scaled up from an R1 that had inbound queued messages.
+	if !isLeader {
+		return NewJSClusterNotLeaderError()
 	}
 
 	// Check here pre-emptively if we have exceeded this server limits.
@@ -6037,7 +6052,7 @@ func (mset *stream) processSnapshotDeletes(snap *streamSnapshot) {
 	state := mset.state()
 
 	// Adjust if FirstSeq has moved.
-	if snap.FirstSeq > state.FirstSeq {
+	if snap.FirstSeq > state.FirstSeq && state.FirstSeq != 0 {
 		mset.store.Compact(snap.FirstSeq)
 		state = mset.store.State()
 		mset.setLastSeq(snap.LastSeq)
@@ -6399,13 +6414,13 @@ func (mset *stream) processCatchupMsg(msg []byte) (uint64, error) {
 	// Messages to be skipped have no subject or timestamp.
 	// TODO(dlc) - formalize with skipMsgOp
 	if subj == _EMPTY_ && ts == 0 {
-		lseq := mset.store.SkipMsg()
-		if lseq != seq {
+		if lseq := mset.store.SkipMsg(); lseq != seq {
 			return 0, errors.New("wrong sequence for skipped msg")
 		}
 	} else if err := mset.store.StoreRawMsg(subj, hdr, msg, seq, ts); err != nil {
 		return 0, err
 	}
+
 	// Update our lseq.
 	mset.setLastSeq(seq)
 
