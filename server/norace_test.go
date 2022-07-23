@@ -5321,6 +5321,12 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 		return nil
 	})
 
+	close(qch)
+	wg.Wait()
+
+	// Just make sure we can succeed here.
+	getMsg("kv.22")
+
 	// For each non-leader check that the direct sub fires up.
 	// We just test all, the leader will already have a directSub.
 	for _, s := range c.servers {
@@ -5336,12 +5342,6 @@ func TestNoRaceJetStreamClusterDirectAccessAllPeersSubs(t *testing.T) {
 			return fmt.Errorf("No directSub yet")
 		})
 	}
-
-	close(qch)
-	wg.Wait()
-
-	// Just make sure we can succeed here.
-	getMsg("kv.22")
 
 	si, err := js.StreamInfo("TEST")
 	require_NoError(t, err)
