@@ -1,19 +1,22 @@
-
 os: linux
 dist: focal
 
 vm:
-  size: 2x-large
+  size: x-large
 
 language: go
 go:
-- 1.18.x
+  # This should be quoted or use .x, but should not be unquoted.
+  # Remember that a YAML bare float drops trailing zeroes.
+  - "1.23.4"
+  - "1.22.10"
+
+go_import_path: github.com/nats-io/nats-server
 
 addons:
   apt:
     packages:
-    - rpm
-go_import_path: github.com/nats-io/nats-server
+      - rpm
 
 jobs:
   include:
@@ -21,26 +24,44 @@ jobs:
       env: TEST_SUITE=compile
     - name: "Run TestNoRace tests"
       env: TEST_SUITE=no_race_tests
+    - name: "Run Store tests"
+      env: TEST_SUITE=store_tests
     - name: "Run JetStream tests"
       env: TEST_SUITE=js_tests
-    - name: "Run JetStream cluster tests"
-      env: TEST_SUITE=js_cluster_tests
+    - name: "Run JetStream cluster tests (1)"
+      env: TEST_SUITE=js_cluster_tests_1
+    - name: "Run JetStream cluster tests (2)"
+      env: TEST_SUITE=js_cluster_tests_2
+    - name: "Run JetStream cluster tests (3)"
+      env: TEST_SUITE=js_cluster_tests_3
+    - name: "Run JetStream cluster tests (4)"
+      env: TEST_SUITE=js_cluster_tests_4
     - name: "Run JetStream super cluster tests"
       env: TEST_SUITE=js_super_cluster_tests
-    - name: "Run non JetStream tests from the server package"
+    - name: "Run MQTT tests"
+      env: TEST_SUITE=mqtt_tests
+    - name: "Run Message Tracing tests"
+      env: TEST_SUITE=msgtrace_tests
+    - name: "Run all other tests from the server package"
       env: TEST_SUITE=srv_pkg_non_js_tests
     - name: "Run all tests from all other packages"
       env: TEST_SUITE=non_srv_pkg_tests
     - name: "Compile with older Go release"
-      go: 1.17.x
+      go: "1.22.x"
       env: TEST_SUITE=build_only
 
 script: ./scripts/runTestsOnTravis.sh $TEST_SUITE
 
+# Install Syft which is used by GoReleaser in the deploy step.
+# Cosign is an optional dependency to verify the Syft binary.
+before_deploy:
+  - curl -o /usr/local/bin/cosign -L https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 && chmod +x /usr/local/bin/cosign
+  - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | COSIGN_BINARY=/usr/local/bin/cosign sh -s -- -v -b /usr/local/bin v1.18.1
+
 deploy:
   provider: script
   cleanup: true
-  script: curl -sL http://git.io/goreleaser | bash
+  script: curl -o /tmp/goreleaser.tar.gz -sLf https://github.com/goreleaser/goreleaser/releases/download/v2.5.0/goreleaser_Linux_x86_64.tar.gz && tar -xvf /tmp/goreleaser.tar.gz -C /tmp/ && /tmp/goreleaser
   on:
     tags: true
-    condition: ($TRAVIS_GO_VERSION =~ 1.18) && ($TEST_SUITE = "compile")
+    condition: ($TRAVIS_GO_VERSION =~ 1.23) && ($TEST_SUITE = "compile")

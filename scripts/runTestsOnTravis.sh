@@ -3,19 +3,14 @@
 set -e
 
 if [ "$1" = "compile" ]; then
-
-    # We will compile and run some vet, spelling and some other checks.
-
-    go install honnef.co/go/tools/cmd/staticcheck@latest;
-    go install github.com/client9/misspell/cmd/misspell@latest;
-    GO_LIST=$(go list ./...);
+    # First check that NATS builds.
     go build;
-    $(exit $(go fmt $GO_LIST | wc -l));
-    go vet $GO_LIST;
-    find . -type f -name "*.go" | xargs misspell -error -locale US;
-    staticcheck $GO_LIST
+
+    # Now run the linters.
+    go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0;
+    golangci-lint run;
     if [ "$TRAVIS_TAG" != "" ]; then
-        go test -race -v -run=TestVersionMatchesTag ./server -count=1 -vet=off
+        go test -race -v -run=TestVersionMatchesTag ./server -ldflags="-X=github.com/nats-io/nats-server/v2/server.serverVersion=$TRAVIS_TAG" -count=1 -vet=off
     fi
 
 elif [ "$1" = "build_only" ]; then
@@ -28,35 +23,85 @@ elif [ "$1" = "no_race_tests" ]; then
 
     go test -v -p=1 -run=TestNoRace ./... -count=1 -vet=off -timeout=30m -failfast
 
+elif [ "$1" = "store_tests" ]; then
+
+    # Run store tests. By convention, all file store tests start with `TestFileStore`,
+    # and memory store tests start with `TestMemStore`.
+
+    go test -race -v -run=TestMemStore ./server -count=1 -vet=off -timeout=30m -failfast
+    go test -race -v -run=TestFileStore ./server -count=1 -vet=off -timeout=30m -failfast
+    go test -race -v -run=TestStore ./server -count=1 -vet=off -timeout=30m -failfast
+
 elif [ "$1" = "js_tests" ]; then
 
     # Run JetStream non-clustered tests. By convention, all JS tests start
     # with `TestJetStream`. We exclude the clustered and super-clustered
-    # tests by using the `skip_js_cluster_tests` and `skip_js_super_cluster_tests`
-    # build tags.
+    # tests by using the appropriate tags.
 
-    go test -race -v -run=TestJetStream ./server -tags=skip_js_cluster_tests,skip_js_super_cluster_tests -count=1 -vet=off -timeout=30m -failfast
+    go test -race -v -run=TestJetStream ./server -tags=skip_js_cluster_tests,skip_js_cluster_tests_2,skip_js_cluster_tests_3,skip_js_cluster_tests_4,skip_js_super_cluster_tests -count=1 -vet=off -timeout=30m -failfast
 
-elif [ "$1" = "js_cluster_tests" ]; then
+elif [ "$1" = "js_cluster_tests_1" ]; then
 
     # Run JetStream clustered tests. By convention, all JS cluster tests
-    # start with `TestJetStreamCluster`.
+    # start with `TestJetStreamCluster`. Will run the first batch of tests,
+    # excluding others with use of proper tags.
 
-    go test -race -v -run=TestJetStreamCluster ./server -count=1 -vet=off -timeout=30m -failfast
+    go test -race -v -run=TestJetStreamCluster ./server -tags=skip_js_cluster_tests_2,skip_js_cluster_tests_3,skip_js_cluster_tests_4 -count=1 -vet=off -timeout=30m -failfast
+
+elif [ "$1" = "js_cluster_tests_2" ]; then
+
+    # Run JetStream clustered tests. By convention, all JS cluster tests
+    # start with `TestJetStreamCluster`. Will run the second batch of tests,
+    # excluding others with use of proper tags.
+
+    go test -race -v -run=TestJetStreamCluster ./server -tags=skip_js_cluster_tests,skip_js_cluster_tests_3,skip_js_cluster_tests_4 -count=1 -vet=off -timeout=30m -failfast
+
+elif [ "$1" = "js_cluster_tests_3" ]; then
+
+    # Run JetStream clustered tests. By convention, all JS cluster tests
+    # start with `TestJetStreamCluster`. Will run the third batch of tests,
+    # excluding others with use of proper tags.
+    #
+
+    go test -race -v -run=TestJetStreamCluster ./server -tags=skip_js_cluster_tests,skip_js_cluster_tests_2,skip_js_cluster_tests_4 -count=1 -vet=off -timeout=30m -failfast
+
+elif [ "$1" = "js_cluster_tests_4" ]; then
+
+    # Run JetStream clustered tests. By convention, all JS cluster tests
+    # start with `TestJetStreamCluster`. Will run the third batch of tests,
+    # excluding others with use of proper tags.
+    #
+
+    go test -race -v -run=TestJetStreamCluster ./server -tags=skip_js_cluster_tests,skip_js_cluster_tests_2,skip_js_cluster_tests_3 -count=1 -vet=off -timeout=30m -failfast
 
 elif [ "$1" = "js_super_cluster_tests" ]; then
 
     # Run JetStream super clustered tests. By convention, all JS super cluster
-    # tests with `TestJetStreamSuperCluster`.
+    # tests start with `TestJetStreamSuperCluster`.
 
     go test -race -v -run=TestJetStreamSuperCluster ./server -count=1 -vet=off -timeout=30m -failfast
+
+elif [ "$1" = "mqtt_tests" ]; then
+
+    # Run MQTT tests. By convention, all MQTT tests start with `TestMQTT`.
+
+    go test -race -v -run=TestMQTT ./server -count=1 -vet=off -timeout=30m -failfast
+
+elif [ "$1" = "msgtrace_tests" ]; then
+
+    # Run Message Tracing tests. By convention, all message tracing tests start with `TestMsgTrace`.
+
+    go test -race -v -run=TestMsgTrace ./server -count=1 -vet=off -timeout=30m -failfast
 
 elif [ "$1" = "srv_pkg_non_js_tests" ]; then
 
     # Run all non JetStream tests in the server package. We exclude the
-    # JS tests by using the `skip_js_tests` build tag.
+    # store tests by using the `skip_store_tests` build tag, the JS tests
+    # by using `skip_js_tests`, MQTT tests by using `skip_mqtt_tests` and
+    # message tracing tests by using `skip_msgtrace_tests`.
 
-    go test -race -v -p=1 ./server/... -tags=skip_js_tests -count=1 -vet=off -timeout=30m -failfast
+    # Also including the ldflag with the version since this includes the `TestVersionMatchesTag`.
+    go test -race -v -p=1 ./server/... -ldflags="-X=github.com/nats-io/nats-server/v2/server.serverVersion=$TRAVIS_TAG" -tags=skip_store_tests,skip_js_tests,skip_mqtt_tests,skip_msgtrace_tests -count=1 -vet=off -timeout=30m -failfast
 
 elif [ "$1" = "non_srv_pkg_tests" ]; then
 

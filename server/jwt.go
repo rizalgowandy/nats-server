@@ -14,9 +14,10 @@
 package server
 
 import (
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func ReadOperatorJWT(jwtfile string) (*jwt.OperatorClaims, error) {
 }
 
 func readOperatorJWT(jwtfile string) (string, *jwt.OperatorClaims, error) {
-	contents, err := ioutil.ReadFile(jwtfile)
+	contents, err := os.ReadFile(jwtfile)
 	if err != nil {
 		// Check to see if the JWT has been inlined.
 		if !strings.HasPrefix(jwtfile, jwtPrefix) {
@@ -105,8 +106,8 @@ func validateTrustedOperators(o *Options) error {
 			return fmt.Errorf("using nats based account resolver - the system account needs to be specified in configuration or the operator jwt")
 		}
 	}
-	ver := strings.Split(strings.Split(strings.Split(VERSION, "-")[0], ".RC")[0], ".beta")[0]
-	srvMajor, srvMinor, srvUpdate, _ := jwt.ParseServerVersion(ver)
+
+	srvMajor, srvMinor, srvUpdate, _ := versionComponents(VERSION)
 	for _, opc := range o.TrustedOperators {
 		if major, minor, update, err := jwt.ParseServerVersion(opc.AssertServerVersion); err != nil {
 			return fmt.Errorf("operator %s expects version %s got error instead: %s",
@@ -152,6 +153,12 @@ func validateTrustedOperators(o *Options) error {
 			o.resolverPinnedAccounts[o.SystemAccount] = struct{}{}
 		}
 	}
+
+	// If we have an auth callout defined make sure we are not in operator mode.
+	if o.AuthCallout != nil {
+		return errors.New("operators do not allow authorization callouts to be configured directly")
+	}
+
 	return nil
 }
 
